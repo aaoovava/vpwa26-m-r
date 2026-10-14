@@ -85,17 +85,24 @@ export const useChatStore = defineStore('chat', {
     },
 
     // UC4: /list command — returns the members of the active channel.
-    activeChannelMembers(): { id: string; nickName: string }[] {
-      const channel = this.activeChannel;
-      if (!channel) return [];
+activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
+  const channel = this.activeChannel;
+  if (!channel) return [];
 
-      const auth = useAuthStore();
-      return channel.memberIds
-        .map((id) => {
-          const user = auth.users.find((u) => u.id === id);
-          return user ? { id: user.id, nickName: user.nickName } : null;
-        })
-        .filter((x): x is { id: string; nickName: string } => x !== null);
+  const auth = useAuthStore();
+  return channel.memberIds
+    .map((id) => {
+      const user = auth.users.find((u) => u.id === id);
+      if (!user) return null;
+      return {
+        id: user.id,
+        nickName: user.nickName,
+        isOwner: channel.ownerId === user.id,
+      };
+    })
+    .filter(
+      (x): x is { id: string; nickName: string; isOwner: boolean } => x !== null,
+    );
     },
   },
 

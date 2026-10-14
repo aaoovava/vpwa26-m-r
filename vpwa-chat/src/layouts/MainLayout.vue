@@ -45,6 +45,11 @@
         @submit="onSubmit"
       />
     </q-footer>
+    <ChannelMembersDialog
+      v-model="membersDialogOpen"
+      :channel-name="chat.activeChannel?.name ?? ''"
+      :members="chat.activeChannelMembers"
+    />
   </q-layout>
 </template>
 
@@ -57,6 +62,7 @@ import ChatInput from '@/components/chat/ChatInput.vue';
 import { useAuthStore } from '@/stores/auth-store';
 import { useChatStore } from '@/stores/chat-store';
 import { parseInput } from '@/utils/command-parser';
+import ChannelMembersDialog from '@/components/chat/ChannelMembersDialog.vue';
 
 const auth = useAuthStore();
 const chat = useChatStore();
@@ -65,6 +71,7 @@ const $q = useQuasar();
 const drawerOpen = ref(false);
 const draft = ref('');
 const inputError = ref('');
+const membersDialogOpen = ref(false);
 let cleanupInterval: ReturnType<typeof setInterval> | undefined;
 
 function checkInactiveChannels() {
@@ -128,16 +135,15 @@ function onSubmit(text: string) {
       }
 
       case 'list': {
-        const members = chat.activeChannelMembers;
-        if (members.length === 0) {
+        if (!chat.activeChannelId) {
           inputError.value = 'No active channel.';
           break;
         }
-        $q.notify({
-          type: 'info',
-          message: `Members: ${members.map((m) => m.nickName).join(', ')}`,
-          timeout: 5000,
-        });
+        if (chat.activeChannelMembers.length === 0) {
+          inputError.value = 'No members to show.';
+          break;
+        }
+        membersDialogOpen.value = true;
         draft.value = '';
         break;
       }
