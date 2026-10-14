@@ -83,6 +83,20 @@ export const useChatStore = defineStore('chat', {
 
       return this.messages.filter((message) => message.channelId === channel.id);
     },
+
+    // UC4: /list command — returns the members of the active channel.
+    activeChannelMembers(): { id: string; nickName: string }[] {
+      const channel = this.activeChannel;
+      if (!channel) return [];
+
+      const auth = useAuthStore();
+      return channel.memberIds
+        .map((id) => {
+          const user = auth.users.find((u) => u.id === id);
+          return user ? { id: user.id, nickName: user.nickName } : null;
+        })
+        .filter((x): x is { id: string; nickName: string } => x !== null);
+    },
   },
 
   actions: {
@@ -207,6 +221,35 @@ export const useChatStore = defineStore('chat', {
       return channel;
     },
 
+    // UC4: /join command — join an existing public channel or create a new one.
+    joinChannel(name: string, isPrivate: boolean): Channel {
+      this.removeInactiveChannels();
+      const user = useAuthStore().currentUser;
+      if (!user) throw new Error('Sign in to join a channel.');
+
+      const channelName = name.trim();
+      if (!channelName) throw new Error('Channel name cannot be empty.');
+
+      const existing = this.channels.find(
+        (c) => c.name.toLowerCase() === channelName.toLowerCase(),
+      );
+
+      if (existing) {
+        if (existing.isPrivate && !existing.memberIds.includes(user.id)) {
+          throw new Error(
+            `Channel "${existing.name}" is private. Ask the owner to invite you.`,
+          );
+        }
+        if (!existing.memberIds.includes(user.id)) {
+          existing.memberIds.push(user.id);
+        }
+        this.activeChannelId = existing.id;
+        return existing;
+      }
+
+      return this.createChannel(channelName, isPrivate);
+    },
+
     sendMessage(text: string): Message {
       this.removeInactiveChannels();
       const user = useAuthStore().currentUser;
@@ -225,6 +268,41 @@ export const useChatStore = defineStore('chat', {
         authorId: user.id,
         text: content,
         createdAt: new Date().toISOString(),
+      };
+
+      this.messages.push(message);
+      channel.lastMessageAt = message.createdAt;
+      return message;
+    },
+
+    // UC6: @nickname text — send a message that mentions a specific user.
+    sendMention(nickName: string, text: string): Message {
+      this.removeInactiveChannels();
+      const auth = useAuthStore();
+      const user = auth.currentUser;
+      if (!user) throw new Error('Sign in to send a message.');
+
+      const channel = this.activeChannel;
+      if (!channel) throw new Error('Select a channel you belong to.');
+
+      const mentioned = auth.users.find(
+        (u) => u.nickName.toLowerCase() === nickName.toLowerCase(),
+      );
+      if (!mentioned) throw new Error(`User "${nickName}" does not exist.`);
+      if (!channel.memberIds.includes(mentioned.id)) {
+        throw new Error(`User "${nickName}" is not a member of this channel.`);
+      }
+
+      const content = text.trim();
+      if (!content) throw new Error('Message cannot be empty.');
+
+      const message: Message = {
+        id: crypto.randomUUID(),
+        channelId: channel.id,
+        authorId: user.id,
+        text: content,
+        createdAt: new Date().toISOString(),
+        mentions: [mentioned.id],
       };
 
       this.messages.push(message);
