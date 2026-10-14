@@ -12,16 +12,7 @@
         />
         <q-toolbar-title>vpwa-chat</q-toolbar-title>
 
-        <q-btn-dropdown flat dense :label="auth.currentUser?.nickName" icon="account_circle">
-          <q-list style="min-width: 200px">
-            <q-item clickable v-close-popup @click="onLogout">
-              <q-item-section avatar>
-                <q-icon name="logout" />
-              </q-item-section>
-              <q-item-section>Sign out</q-item-section>
-            </q-item>
-          </q-list>
-        </q-btn-dropdown>
+        <UserMenu @logout="onLogout" />
       </q-toolbar>
     </q-header>
 
@@ -54,6 +45,7 @@ import { useQuasar } from 'quasar';
 import { useRouter } from 'vue-router';
 import ChannelList from '@/components/chat/ChannelList.vue';
 import ChatInput from '@/components/chat/ChatInput.vue';
+import UserMenu from '@/components/chat/UserMenu.vue';
 import { useAuthStore } from '@/stores/auth-store';
 import { useChatStore } from '@/stores/chat-store';
 import { parseInput } from '@/utils/command-parser';
