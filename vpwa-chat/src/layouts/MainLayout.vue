@@ -98,7 +98,7 @@ function onSubmit(text: string) {
         break;
 
       case 'mention':
-        chat.sendMention(parsed.nickName, parsed.text);
+        chat.sendMention(parsed.nickName, text);
         draft.value = '';
         break;
 
