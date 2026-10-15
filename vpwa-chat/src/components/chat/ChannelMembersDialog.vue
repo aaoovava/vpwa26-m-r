@@ -27,8 +27,18 @@
               </q-item-label>
             </q-item-section>
 
-            <q-item-section v-if="member.nickName === currentUserNick" side>
-              <q-badge color="primary" label="You" />
+            <q-item-section side>
+              <div class="row items-center no-wrap">
+                <q-badge v-if="isCurrentUser(member)" color="primary" label="You" class="q-mr-sm" />
+                <q-icon
+                  :name="statusOf(member).icon"
+                  :color="statusOf(member).color"
+                  size="20px"
+                  :aria-label="`Status: ${statusOf(member).label}`"
+                >
+                  <q-tooltip>{{ statusOf(member).label }}</q-tooltip>
+                </q-icon>
+              </div>
             </q-item-section>
           </q-item>
         </q-list>
@@ -46,8 +56,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
 import { useAuthStore } from '@/stores/auth-store';
+import { getStatusOption } from '@/types/user-status';
 
 interface MemberInfo {
   id: string;
@@ -63,7 +73,14 @@ defineProps<{
 const open = defineModel<boolean>({ default: false });
 const auth = useAuthStore();
 
-const currentUserNick = computed(() => auth.currentUser?.nickName ?? '');
+function isCurrentUser(member: MemberInfo): boolean {
+  return member.id === auth.currentUser?.id;
+}
+
+// Prototype: the current user shows their real status, everyone else is offline
+function statusOf(member: MemberInfo) {
+  return getStatusOption(isCurrentUser(member) ? auth.currentUser?.status : 'offline');
+}
 </script>
 
 <style scoped>
