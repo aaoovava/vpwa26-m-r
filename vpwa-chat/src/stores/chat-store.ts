@@ -5,6 +5,49 @@ import { useAuthStore } from '@/stores/auth-store';
 
 const CHANNEL_INACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
 
+function seedGeneralMessages(): Message[] {
+  const channelId = 'general';
+  const authors = ['roman', 'matej'];
+  const samples = [
+    'Hello everyone!',
+    'How is the project going?',
+    'I think we should refactor this.',
+    'Did you see the new update?',
+    'Let me check the docs.',
+    'Great work! 🎉',
+    'I will be back in 10 minutes.',
+    'Can someone review my PR?',
+    'Fixed the bug on line 42.',
+    'Who wants to pair program?',
+    'Meeting at 3pm, room 204.',
+    'The tests are passing now.',
+    'Let me push the changes.',
+    'Anyone online?',
+    'Good night!',
+  ];
+
+  const count = 100;
+  const now = Date.now();
+  const step = 60_000; // 1 minute apart
+  const messages: Message[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const authorId = authors[i % authors.length]!;
+    const text = samples[i % samples.length]!;
+    const createdAt = new Date(now - (count - i) * step).toISOString();
+
+    messages.push({
+      id: crypto.randomUUID(),
+      channelId,
+      authorId,
+      text,
+      createdAt,
+    });
+  }
+
+  return messages;
+}
+
 export const useChatStore = defineStore('chat', {
   state: (): {
     channels: Channel[];
@@ -44,7 +87,7 @@ export const useChatStore = defineStore('chat', {
     ],
     activeChannelId: null,
     // Phase 1: messages are kept in memory and reset on page reload.
-    messages: [],
+    messages: seedGeneralMessages(),
     // Demo invitation: sign in as matej to see project highlighted at the top.
     pendingInvitations: [{ channelId: 'project', userId: 'matej' }],
   }),
