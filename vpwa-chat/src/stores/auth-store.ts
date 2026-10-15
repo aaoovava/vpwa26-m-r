@@ -1,5 +1,5 @@
-import { defineStore } from 'pinia';
-import type { User } from '@/types/user';
+import { acceptHMRUpdate, defineStore } from 'pinia';
+import type { NotificationPreference, User } from '@/types/user';
 
 export interface RegisterPayload {
   firstName: string;
@@ -17,6 +17,7 @@ const mockUsers: User[] = [
     lastName: 'Kováč',
     email: 'roman@test.sk',
     status: 'online',
+    notificationPreference: 'all',
   },
   {
     id: 'matej',
@@ -25,6 +26,7 @@ const mockUsers: User[] = [
     lastName: 'Horváth',
     email: 'matej@test.sk',
     status: 'online',
+    notificationPreference: 'all',
   },
 ];
 
@@ -47,6 +49,8 @@ export const useAuthStore = defineStore('auth', {
       if (!raw) return;
       try {
         this.currentUser = JSON.parse(raw) as User;
+        this.currentUser.notificationPreference =
+          this.currentUser.notificationPreference === 'mentions' ? 'mentions' : 'all';
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -61,9 +65,7 @@ export const useAuthStore = defineStore('auth', {
     },
 
     login(nickName: string) {
-      const user = this.users.find(
-        (u) => u.nickName.toLowerCase() === nickName.toLowerCase()
-      );
+      const user = this.users.find((u) => u.nickName.toLowerCase() === nickName.toLowerCase());
       if (!user) {
         throw new Error(`User "${nickName}" does not exist`);
       }
@@ -74,16 +76,10 @@ export const useAuthStore = defineStore('auth', {
     register(payload: RegisterPayload) {
       const { nickName, email } = payload;
 
-      if (
-        this.users.some(
-          (u) => u.nickName.toLowerCase() === nickName.toLowerCase()
-        )
-      ) {
+      if (this.users.some((u) => u.nickName.toLowerCase() === nickName.toLowerCase())) {
         throw new Error('Nickname is already taken');
       }
-      if (
-        this.users.some((u) => u.email.toLowerCase() === email.toLowerCase())
-      ) {
+      if (this.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
         throw new Error('Email is already registered');
       }
 
@@ -91,6 +87,7 @@ export const useAuthStore = defineStore('auth', {
         id: crypto.randomUUID(),
         ...payload,
         status: 'online',
+        notificationPreference: 'all',
       };
       this.users.push(newUser);
       this.currentUser = newUser;
@@ -108,5 +105,17 @@ export const useAuthStore = defineStore('auth', {
         this.persistSession();
       }
     },
+
+    setNotificationPreference(preference: NotificationPreference) {
+      if (!this.currentUser) return;
+      this.currentUser.notificationPreference = preference;
+      const user = this.users.find((item) => item.id === this.currentUser?.id);
+      if (user) user.notificationPreference = preference;
+      this.persistSession();
+    },
   },
 });
+
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useAuthStore, import.meta.hot));
+}
