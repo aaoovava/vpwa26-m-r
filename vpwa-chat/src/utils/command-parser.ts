@@ -8,24 +8,20 @@ export type ParsedCommand =
   | { type: 'message'; text: string }
   | { type: 'error'; message: string };
 
-// @nickname some text
-const MENTION_REGEX = /^@([\w-]+)\s+(.+)$/s;
+// Matches @nickname anywhere in the text.
+// The lookbehind skips cases like "user@example.com" (a word char or "@" right before "@").
+const MENTION_REGEX = /(?<![\w@])@([\w-]+)/;
 
 export function parseInput(raw: string): ParsedCommand {
   const input = raw.trim();
   if (!input) return { type: 'error', message: 'Message cannot be empty.' };
 
-  // Mention: @nick text
-  if (input.startsWith('@')) {
-    const match = input.match(MENTION_REGEX);
-    if (!match) {
-      return { type: 'error', message: 'Mention must be in format: @nickname message' };
-    }
-    return { type: 'mention', nickName: match[1]!, text: match[2]!.trim() };
-  }
-
-  // Regular message
   if (!input.startsWith('/')) {
+    const match = input.match(MENTION_REGEX);
+    if (match) {
+      // The first mention is used; text keeps the full original message
+      return { type: 'mention', nickName: match[1]!, text: input };
+    }
     return { type: 'message', text: input };
   }
 
