@@ -8,7 +8,7 @@
       </template>
     </div>
 
-    <form class="row items-center q-gutter-sm q-pa-sm" @submit.prevent="submit">
+    <form class="row items-start q-gutter-sm q-pa-sm" @submit.prevent="submit">
       <q-input
         v-model="text"
         class="col"
@@ -20,7 +20,14 @@
         :error-message="error"
         hide-bottom-space
       />
-      <q-btn type="submit" color="primary" icon="send" aria-label="Send" :disable="!text.trim()" />
+      <q-btn
+        class="send-button"
+        type="submit"
+        color="primary"
+        icon="send"
+        aria-label="Send"
+        :disable="!text.trim()"
+      />
     </form>
   </div>
 </template>
@@ -65,6 +72,10 @@ function submit() {
 </script>
 
 <style scoped>
+.send-button {
+  height: 40px;
+}
+
 .typing-indicator {
   min-height: 20px;
 }
