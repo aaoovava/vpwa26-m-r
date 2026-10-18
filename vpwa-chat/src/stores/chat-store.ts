@@ -2,6 +2,7 @@ import { acceptHMRUpdate, defineStore } from 'pinia';
 import type { Channel, ChannelInvitation } from '@/types/channel';
 import type { Message } from '@/types/message';
 import { useAuthStore } from '@/stores/auth-store';
+import { validateChannelName } from '@/utils/channel-name';
 
 const CHANNEL_INACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -248,8 +249,7 @@ activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
       const user = useAuthStore().currentUser;
       if (!user) throw new Error('Sign in to create a channel.');
 
-      const channelName = name.trim();
-      if (!channelName) throw new Error('Channel name cannot be empty.');
+      const channelName = validateChannelName(name);
       if (
         this.channels.some((channel) => channel.name.toLowerCase() === channelName.toLowerCase())
       ) {
@@ -277,8 +277,7 @@ activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
       const user = useAuthStore().currentUser;
       if (!user) throw new Error('Sign in to join a channel.');
 
-      const channelName = name.trim();
-      if (!channelName) throw new Error('Channel name cannot be empty.');
+      const channelName = validateChannelName(name);
 
       const existing = this.channels.find(
         (c) => c.name.toLowerCase() === channelName.toLowerCase(),

@@ -33,7 +33,12 @@ export function parseInput(raw: string): ParsedCommand {
   switch (command) {
     case 'join': {
       const name = args[0];
-      if (!name) return { type: 'error', message: 'Usage: /join channelName [private]' };
+      if (!name || args.length > 2 || (args[1] && args[1].toLowerCase() !== 'private')) {
+        return {
+          type: 'error',
+          message: 'Usage: /join channelName [private]. Channel names cannot contain spaces.',
+        };
+      }
       const isPrivate = args[1]?.toLowerCase() === 'private';
       return { type: 'join', name, isPrivate };
     }

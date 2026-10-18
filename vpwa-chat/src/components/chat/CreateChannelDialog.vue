@@ -12,6 +12,7 @@
             outlined
             autofocus
             label="Channel name"
+            hint="No spaces; for example, my-channel"
             :error="!!error"
             :error-message="error"
             @update:model-value="error = ''"
