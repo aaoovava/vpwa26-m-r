@@ -5,6 +5,7 @@ import type { HasMany, ManyToMany } from '@adonisjs/lucid/types/relations'
 import { withAuthFinder } from '@adonisjs/auth/mixins/lucid'
 import { compose } from '@adonisjs/core/helpers'
 import hash from '@adonisjs/core/services/hash'
+import { DbAccessTokensProvider } from '@adonisjs/auth/access_tokens'
 
 import ChannelMember from './channel_member.js'
 import Message from './message.js'
@@ -66,4 +67,6 @@ export default class User extends compose(BaseModel, AuthFinder) {
     pivotRelatedForeignKey: 'channel_id',
   })
   declare channels: ManyToMany<typeof ChannelMember>
+
+  static accessTokens = DbAccessTokensProvider.forModel(User)
 }
