@@ -6,6 +6,8 @@ export type ParsedCommand =
   | { type: 'quit' }
   | { type: 'mention'; nickName: string; text: string }
   | { type: 'message'; text: string }
+  | { type: 'kick'; nickName: string }
+  | { type: 'revoke'; nickName: string }
   | { type: 'error'; message: string };
 
 // Matches @nickname anywhere in the text.
@@ -57,6 +59,18 @@ export function parseInput(raw: string): ParsedCommand {
 
     case 'quit':
       return { type: 'quit' };
+
+    case 'kick': {
+      const nickName = args[0];
+      if (!nickName || args.length !== 1) return { type: 'error', message: 'Usage: /kick nickName' };
+      return { type: 'kick', nickName };
+    }
+
+    case 'revoke': {
+      const nickName = args[0];
+      if (!nickName || args.length !== 1) return { type: 'error', message: 'Usage: /revoke nickName' };
+      return { type: 'revoke', nickName };
+    }
 
     default:
       return { type: 'error', message: `Unknown command: /${command}` };

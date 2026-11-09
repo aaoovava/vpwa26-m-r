@@ -354,6 +354,24 @@ export const useChatStore = defineStore('chat', {
       }
     },
 
+    async kickUser(channelId: string, nickName: string) {
+      const { data } = await api.post<{ message: string }>(
+        `/channels/${channelId}/kick`,
+        { nickName: nickName.trim() },
+      );
+      await this.fetchChannels();
+      return data;
+    },
+
+    async revokeUser(channelId: string, nickName: string) {
+      const { data } = await api.post<{ message: string }>(
+        `/channels/${channelId}/revoke`,
+        { nickName: nickName.trim() },
+      );
+      await this.fetchChannels();
+      return data;
+    },
+
     async sendMessage(channelId: string, text: string): Promise<Message> {
       const auth = useAuthStore();
       const token = auth.token;

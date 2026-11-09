@@ -170,14 +170,36 @@ export default class ChannelService {
   async revokeUser(ownerId: string, channelId: string, targetNickName: string) {
     const channel = await Channel.findOrFail(channelId)
     if (channel.ownerId !== ownerId) throw new Error('Only the owner can revoke users.')
+    if (!channel.isPrivate) throw new Error('This action is only for private channels.')
+    if (typeof targetNickName !== 'string' || !targetNickName.trim()) {
+      throw new Error('Nickname is required.')
+    }
 
-    const target = await User.findByOrFail('nick_name', targetNickName)
-    await ChannelMember.query()
-      .where('channel_id', channel.id)
-      .where('user_id', target.id)
-      .delete()
+    const target = await User.query().whereRaw('LOWER(nick_name) = ?', [targetNickName.trim().toLowerCase()]).first()
+    if (!target) throw new Error('User does not exist.')
 
-    return { message: 'User removed from channel.' }
+    if(target.id === ownerId) throw new Error('Owner cannot revoke themselves.')
+
+    return await db.transaction(async (trx) => {
+      // 1. Remove from channel members
+      const member = await ChannelMember.query({ client: trx })
+        .where('channel_id', channel.id)
+        .where('user_id', target.id)
+        .forUpdate()
+        .first()
+
+      if (!member) throw new Error('User is not a member of this channel.')
+
+      await member.delete()
+
+      // 2. Delete any pending invitations
+      await ChannelInvitation.query({ client: trx })
+        .where('channel_id', channel.id)
+        .where('invitee_id', target.id)
+        .delete()
+
+      return { message: 'User revoked from the channel.' }
+    })
   }
 
   /**
@@ -185,48 +207,73 @@ export default class ChannelService {
    */
   async kickUser(voterId: string, channelId: string, targetNickName: string) {
     const channel = await Channel.findOrFail(channelId)
-    const target = await User.findByOrFail('nick_name', targetNickName)
+
+    if (channel.isPrivate) throw new Error('Members cannot kick in private channels.')
+    if (typeof targetNickName !== 'string' || !targetNickName.trim()) {
+      throw new Error('Nickname is required.')
+    }
+
+    const target = await User.query().whereRaw('LOWER(nick_name) = ?', [targetNickName.trim().toLowerCase()]).first()
+    if (!target) throw new Error('User does not exist.')
+    if (target.id === voterId) throw new Error('You cannot kick yourself.')
+    if (channel.ownerId === target.id) throw new Error('You cannot kick the owner.')
 
     if (voterId === target.id) throw new Error('You cannot kick yourself.')
     if (channel.ownerId === target.id) throw new Error('You cannot kick the owner.')
 
-    const member = await ChannelMember.query()
-      .where('channel_id', channel.id)
-      .where('user_id', target.id)
-      .first()
+    return await db.transaction(async (trx) => {
+      const voterMember = await ChannelMember.query({ client: trx })
+        .where('channel_id', channel.id)
+        .where('user_id', voterId)
+        .where('is_banned', false)
+        .first()
 
-    if (!member) throw new Error('User is not in this channel.')
+      if (!voterMember) throw new Error('You are not a member of this channel.')
 
-    // Owner kicks instantly
-    if (channel.ownerId === voterId) {
-      member.isBanned = true
-      await member.save()
-      return { message: 'User has been permanently banned by the owner.' }
-    }
+      const targetMember = await ChannelMember.query({ client: trx })
+        .where('channel_id', channel.id)
+        .where('user_id', target.id)
+        .forUpdate()
+        .first()
 
-    if (channel.isPrivate) throw new Error('Members cannot kick in private channels.')
+      if (!targetMember) throw new Error('Target user is not a member of this channel.')
+      if (targetMember.isBanned) throw new Error('Target user is already banned.')
 
-    // Check if the user already voted
-    const existingVote = await KickVote.query()
-      .where('channel_id', channel.id)
-      .where('target_id', target.id)
-      .where('voter_id', voterId)
-      .first()
+      const isOwner = channel.ownerId === voterId
+      if (!isOwner) {
+        const existingVote = await KickVote.query({ client: trx })
+          .where('channel_id', channel.id)
+          .where('target_id', target.id)
+          .where('voter_id', voterId)
+          .first()
 
-    if (existingVote) throw new Error('You have already voted to kick this user.')
+        if (existingVote) throw new Error('You have already voted to kick this user.')
 
-    await KickVote.create({ channelId: channel.id, targetId: target.id, voterId })
+        await KickVote.create({
+          channelId: channel.id,
+          targetId: target.id,
+          voterId,
+        }, { client: trx })
+      }
 
-    // Count votes
-    const votes = await KickVote.query().where('channel_id', channel.id).where('target_id', target.id)
+      const votes = await KickVote.query({ client: trx })
+        .where('channel_id', channel.id)
+        .where('target_id', target.id)
 
-    if (votes.length >= 3) {
-      member.isBanned = true
-      member.banCount = 3
-      await member.save()
-      return { message: 'User has been banned (3 votes reached).' }
-    }
+      targetMember.banCount = votes.length
+      targetMember.isBanned = isOwner || votes.length >= 3
+      await targetMember.save()
 
-    return { message: `Vote registered (${votes.length}/3).` }
+      if (targetMember.isBanned) {
+        await ChannelInvitation.query({ client: trx })
+          .where('channel_id', channel.id)
+          .where('invitee_id', target.id)
+          .delete()
+        return { message: isOwner ? 'User has been banned by owner.' : "User has been banned. (3 votes reached)" }
+      }
+
+
+      return { message: `Vote registered (${votes.length}/3).` }
+    })
   }
 }

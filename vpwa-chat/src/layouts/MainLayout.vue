@@ -209,6 +209,21 @@ async function onSubmit(text: string) {
         $q.notify({ type: 'info', message: 'Channel deleted.' });
         break;
       }
+      case 'kick':
+      case 'revoke': {
+        if (!chat.activeChannelId) {
+          inputError.value = 'Select a channel first.';
+          break;
+        }
+
+        const result = parsed.type === 'kick'
+          ? await chat.kickUser(chat.activeChannelId, parsed.nickName)
+          : await chat.revokeUser(chat.activeChannelId, parsed.nickName);
+
+        draft.value = '';
+        $q.notify({ type: 'info', message: result.message });
+        break;
+      }
 
       case 'error':
         inputError.value = parsed.message;
