@@ -92,7 +92,7 @@
     </q-item>
   </q-list>
   <CreateChannelDialog v-model="createDialogOpen" @created="emit('selected')" />
-  <q-dialog v-model="leaveDialogOpen">
+  <q-dialog v-model="leaveDialogOpen" :persistent="leaving">
     <q-card class="leave-channel-card">
       <q-card-section>
         <h2 class="text-h6 q-ma-none">{{ actionLabel }}</h2>
@@ -111,8 +111,14 @@
         <p v-if="leaveError" role="alert" class="text-negative">{{ leaveError }}</p>
       </q-card-section>
       <q-card-actions align="right">
-        <q-btn v-close-popup flat label="Cancel" />
-        <q-btn color="negative" :label="actionLabel" @click="confirmLeave" />
+        <q-btn v-close-popup flat label="Cancel" :disable="leaving" />
+        <q-btn
+          color="negative"
+          :label="actionLabel"
+          :loading="leaving"
+          :disable="leaving"
+          @click="confirmLeave"
+        />
       </q-card-actions>
     </q-card>
   </q-dialog>
@@ -130,6 +136,7 @@ const createDialogOpen = ref(false);
 const leaveDialogOpen = ref(false);
 const leaveChannelId = ref<string | null>(null);
 const leaveError = ref('');
+const leaving = ref(false);
 const channelAction = ref<'leave' | 'delete'>('leave');
 const actionLabel = computed(() =>
   channelAction.value === 'delete' ? 'Delete channel' : 'Leave channel',
@@ -146,18 +153,22 @@ function requestLeave(channelId: string, action: 'leave' | 'delete' = 'leave') {
   leaveDialogOpen.value = true;
 }
 
-function confirmLeave() {
-  if (!leaveChannelId.value) return;
+async function confirmLeave() {
+  if (!leaveChannelId.value || leaving.value) return;
+  leaving.value = true;
+  leaveError.value = '';
   try {
     if (channelAction.value === 'delete') {
-      chat.deleteChannel(leaveChannelId.value);
+      await chat.deleteChannel(leaveChannelId.value);
     } else {
-      chat.leaveChannel(leaveChannelId.value);
+      await chat.leaveChannel(leaveChannelId.value);
     }
     leaveDialogOpen.value = false;
   } catch (error) {
     leaveError.value =
       error instanceof Error ? error.message : 'Unable to complete channel action.';
+  } finally {
+    leaving.value = false;
   }
 }
 

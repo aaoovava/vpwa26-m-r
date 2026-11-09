@@ -12,6 +12,7 @@
       <q-input
         v-model="text"
         class="col"
+        :disable="loading"
         outlined
         dense
         label="Message or command"
@@ -26,7 +27,8 @@
         color="primary"
         icon="send"
         aria-label="Send"
-        :disable="!text.trim()"
+        :disable="!text.trim() || loading"
+        :loading="loading"
       />
     </form>
   </div>
@@ -35,7 +37,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
-defineProps<{ error?: string; placeholder: string }>();
+const props = defineProps<{ error?: string; placeholder: string; loading?: boolean }>();
 const text = defineModel<string>({ default: '' });
 const emit = defineEmits<{ submit: [text: string] }>();
 
@@ -65,7 +67,7 @@ onBeforeUnmount(() => {
 
 function submit() {
   const value = text.value.trim();
-  if (!value) return;
+  if (!value || props.loading) return;
 
   emit('submit', value);
 }

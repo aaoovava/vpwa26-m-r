@@ -3,9 +3,7 @@ import type { Channel, ChannelInvitation, ApiChannel } from '@/types/channel';
 import type { Message } from '@/types/message';
 import { useAuthStore } from '@/stores/auth-store';
 import { validateChannelName } from '@/utils/channel-name';
-import { apiRequest } from '@/utils/api';
-
-const CHANNEL_INACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
+import { api } from '@/boot/axios';
 
 export const useChatStore = defineStore('chat', {
   state: (): {
@@ -105,7 +103,7 @@ export const useChatStore = defineStore('chat', {
         auth.token === token;
 
       try {
-        const data = await apiRequest<ApiChannel[]>('/channels');
+        const { data } = await api.get<ApiChannel[]>('/channels');
         // Ignore responses from requests made before logout or an account switch.
         if (!isCurrentRequest()) return;
         this.channels = data.map((channel) => ({
@@ -142,42 +140,34 @@ export const useChatStore = defineStore('chat', {
       }
     },
 
-    // Prototype-only control for demonstrating automatic channel expiration.
-    simulateChannelInactivity(channelId: string) {
-      const channel = this.myChannels.find((item) => item.id === channelId);
-      if (!channel) throw new Error('Select a channel you belong to.');
-
-      const now = Date.now();
-      const inactiveSince = new Date(now - CHANNEL_INACTIVITY_MS - 1000).toISOString();
-      channel.createdAt = inactiveSince;
-      if (channel.lastMessageAt !== null) channel.lastMessageAt = inactiveSince;
-      this.removeInactiveChannels(now);
+    // Prevent an older list request from restoring a channel removed by an action.
+    invalidateChannelListRequest() {
+      this.channelsRequestId = null;
+      this.channelsLoading = false;
+      this.channelsError = '';
     },
 
-    // Prototype cleanup; the backend will enforce expiration in the final app.
-    removeInactiveChannels(now: number = Date.now()) {
-      const expiredIds = new Set(
-        this.channels
-          .filter(
-            (channel) =>
-              now - Date.parse(channel.lastMessageAt ?? channel.createdAt) > CHANNEL_INACTIVITY_MS,
-          )
-          .map((channel) => channel.id),
-      );
-      if (expiredIds.size === 0) return;
-
-      this.channels = this.channels.filter((channel) => !expiredIds.has(channel.id));
-      this.messages = this.messages.filter((message) => !expiredIds.has(message.channelId));
+    removeChannelLocally(channelId: string) {
+      this.invalidateChannelListRequest();
+      this.channels = this.channels.filter((channel) => channel.id !== channelId);
+      this.messages = this.messages.filter((message) => message.channelId !== channelId);
       this.pendingInvitations = this.pendingInvitations.filter(
-        (invitation) => !expiredIds.has(invitation.channelId),
+        (invitation) => invitation.channelId !== channelId,
       );
-      if (this.activeChannelId && expiredIds.has(this.activeChannelId)) {
-        this.activeChannelId = null;
+      if (this.activeChannelId === channelId) this.activeChannelId = null;
+    },
+
+    async simulateChannelInactivity(channelId: string) {
+      const auth = useAuthStore();
+      const token = auth.token;
+      if (!this.myChannels.some((channel) => channel.id === channelId)) {
+        throw new Error('Select a channel you belong to.');
       }
+      await api.post(`/channels/${channelId}/simulate-inactivity`);
+      if (auth.token === token) this.removeChannelLocally(channelId);
     },
 
     inviteUser(channelId: string, nickName: string) {
-      this.removeInactiveChannels();
       const auth = useAuthStore();
       const user = auth.currentUser;
       if (!user) throw new Error('Sign in to invite a user.');
@@ -200,71 +190,53 @@ export const useChatStore = defineStore('chat', {
       this.pendingInvitations.push({ channelId, userId: invitedUser.id });
     },
 
-    deleteChannel(channelId: string) {
-      const user = useAuthStore().currentUser;
+    async deleteChannel(channelId: string) {
+      const auth = useAuthStore();
+      const user = auth.currentUser;
+      const token = auth.token;
       if (!user) throw new Error('Sign in to delete a channel.');
-
-      const channel = this.channels.find((item) => item.id === channelId);
+      const channel = this.myChannels.find((item) => item.id === channelId);
       if (!channel) throw new Error('Channel no longer exists.');
       if (channel.ownerId !== user.id) throw new Error('Only the owner can delete this channel.');
 
-      this.channels = this.channels.filter((item) => item.id !== channelId);
-      this.messages = this.messages.filter((message) => message.channelId !== channelId);
-      this.pendingInvitations = this.pendingInvitations.filter(
-        (invitation) => invitation.channelId !== channelId,
-      );
-      if (this.activeChannelId === channelId) this.activeChannelId = null;
+      await api.delete(`/channels/${channelId}/destroy`);
+      if (auth.token === token) this.removeChannelLocally(channelId);
     },
 
-    leaveChannel(channelId: string) {
-      const user = useAuthStore().currentUser;
-      if (!user) throw new Error('Sign in to leave a channel.');
-
-      const channel = this.myChannels.find((item) => item.id === channelId);
-      if (!channel) throw new Error('You are not a member of this channel.');
-
-      if (channel.ownerId === user.id) {
-        this.deleteChannel(channelId);
-      } else {
-        channel.memberIds = channel.memberIds.filter((id) => id !== user.id);
-        this.pendingInvitations = this.pendingInvitations.filter(
-          (invitation) => invitation.channelId !== channelId || invitation.userId !== user.id,
-        );
+    async leaveChannel(channelId: string) {
+      const auth = useAuthStore();
+      const token = auth.token;
+      if (!auth.currentUser) throw new Error('Sign in to leave a channel.');
+      if (!this.myChannels.some((channel) => channel.id === channelId)) {
+        throw new Error('You are not a member of this channel.');
       }
-
-      if (this.activeChannelId === channelId) this.activeChannelId = null;
+      // The backend deletes the entire channel if its owner leaves.
+      await api.delete(`/channels/${channelId}/leave`);
+      if (auth.token === token) this.removeChannelLocally(channelId);
     },
 
-    createChannel(name: string, isPrivate: boolean = false): Channel {
-      this.removeInactiveChannels();
-      const user = useAuthStore().currentUser;
+    async createChannel(name: string, isPrivate: boolean = false): Promise<Channel> {
+      const auth = useAuthStore();
+      const user = auth.currentUser;
+      const token = auth.token;
       if (!user) throw new Error('Sign in to create a channel.');
-
       const channelName = validateChannelName(name);
-      if (
-        this.channels.some((channel) => channel.name.toLowerCase() === channelName.toLowerCase())
-      ) {
-        throw new Error('A channel with this name already exists.');
-      }
-
-      const channel: Channel = {
-        id: crypto.randomUUID(),
+      const { data } = await api.post<Omit<Channel, 'memberIds'>>('/channels', {
         name: channelName,
         isPrivate,
-        ownerId: user.id,
-        memberIds: [user.id],
-        createdAt: new Date().toISOString(),
-        lastMessageAt: null,
-      };
-
-      this.channels.push(channel);
-      this.activeChannelId = channel.id;
+      });
+      const channel: Channel = { ...data, memberIds: [user.id] };
+      if (auth.token === token) {
+        this.invalidateChannelListRequest();
+        this.channelsUserId = user.id;
+        this.channels = [channel, ...this.channels.filter((item) => item.id !== channel.id)];
+        this.activeChannelId = channel.id;
+      }
       return channel;
     },
 
     // UC4: /join command — join an existing public channel or create a new one.
-    joinChannel(name: string, isPrivate: boolean): Channel {
-      this.removeInactiveChannels();
+    async joinChannel(name: string, isPrivate: boolean): Promise<Channel> {
       const user = useAuthStore().currentUser;
       if (!user) throw new Error('Sign in to join a channel.');
 
@@ -289,7 +261,6 @@ export const useChatStore = defineStore('chat', {
     },
 
     sendMessage(text: string): Message {
-      this.removeInactiveChannels();
       const user = useAuthStore().currentUser;
       if (!user) throw new Error('Sign in to send a message.');
 
@@ -315,7 +286,6 @@ export const useChatStore = defineStore('chat', {
 
     // UC6: @nickname text — send a message that mentions a specific user.
     sendMention(nickName: string, text: string): Message {
-      this.removeInactiveChannels();
       const auth = useAuthStore();
       const user = auth.currentUser;
       if (!user) throw new Error('Sign in to send a message.');

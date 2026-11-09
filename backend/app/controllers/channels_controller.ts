@@ -16,8 +16,9 @@ export default class ChannelsController {
     await Channel.query()
       .where((query) => {
         query.where('last_message_at', '<', thirtyDaysAgo)
-          .orWhereNull('last_message_at')
-          .where('created_at', '<', thirtyDaysAgo)
+          .orWhere((emptyChannel) => {
+            emptyChannel.whereNull('last_message_at').where('created_at', '<', thirtyDaysAgo)
+          })
       })
       .delete()
   }
@@ -123,7 +124,13 @@ export default class ChannelsController {
    * @summary Simulate 30 days inactivity (Demo)
    * @responseBody 200 - {"message": "Channel removed"}
    */
-  async simulateInactivity({ params, response }: HttpContext) {
+  async simulateInactivity({ params, auth, response }: HttpContext) {
+    const member = await ChannelMember.query()
+      .where('channel_id', params.id)
+      .where('user_id', auth.user!.id)
+      .where('is_banned', false)
+      .first()
+    if (!member) return response.forbidden({ message: 'You are not a member of this channel' })
     const channel = await Channel.findOrFail(params.id)
     channel.lastMessageAt = DateTime.now().minus({ days: 31 })
     await channel.save()

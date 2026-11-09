@@ -1,6 +1,7 @@
 import { acceptHMRUpdate, defineStore } from 'pinia';
 import type { NotificationPreference, User } from '@/types/user';
-import { ApiError, apiRequest, TOKEN_STORAGE_KEY } from '@/utils/api';
+import { isAxiosError } from 'axios';
+import { api, TOKEN_STORAGE_KEY } from '@/boot/axios';
 
 export interface RegisterPayload {
   firstName: string;
@@ -77,9 +78,10 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem('vpwa-chat.currentUser');
       if (!this.token) return;
       try {
-        this.setCurrentUser(await apiRequest<ApiUser>('/auth/me'));
+        const response = await api.get<ApiUser>('/auth/me');
+        this.setCurrentUser(response.data);
       } catch (error) {
-        if (error instanceof ApiError && error.status === 401) {
+        if (isAxiosError(error) && error.response?.status === 401) {
           this.clearSession();
         } else {
           this.currentUser = null;
@@ -89,9 +91,9 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async login(nickName: string, password: string) {
-      const data = await apiRequest<AuthResponse>('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ nickName: nickName.trim(), password }),
+      const { data } = await api.post<AuthResponse>('/auth/login', {
+        nickName: nickName.trim(),
+        password,
       });
       localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
       this.token = data.token;
@@ -99,10 +101,7 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async register(payload: RegisterPayload) {
-      const data = await apiRequest<AuthResponse>('/auth/register', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
+      const { data } = await api.post<AuthResponse>('/auth/register', payload);
       localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
       this.token = data.token;
       this.setCurrentUser(data.user);
@@ -110,7 +109,7 @@ export const useAuthStore = defineStore('auth', {
 
     async logout() {
       try {
-        await apiRequest('/auth/logout', { method: 'POST' });
+        await api.post('/auth/logout');
       } finally {
         this.clearSession();
       }

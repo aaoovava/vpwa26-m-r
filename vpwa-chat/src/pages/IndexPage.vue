@@ -26,7 +26,7 @@
         Choose a channel from the sidebar. On mobile, open it using the menu button.
       </p>
     </div>
-    <q-dialog v-model="simulationOpen">
+    <q-dialog v-model="simulationOpen" :persistent="simulating">
       <q-card style="width: 400px; max-width: calc(100vw - 32px)">
         <q-card-section>
           <h2 class="text-h6 q-ma-none">Simulate inactivity</h2>
@@ -39,8 +39,14 @@
           </p>
         </q-card-section>
         <q-card-actions align="right">
-          <q-btn v-close-popup flat label="Cancel" />
-          <q-btn color="negative" label="Simulate expiration" @click="simulateInactivity" />
+          <q-btn v-close-popup flat label="Cancel" :disable="simulating" />
+          <q-btn
+            color="negative"
+            label="Simulate expiration"
+            :loading="simulating"
+            :disable="simulating"
+            @click="simulateInactivity"
+          />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -56,6 +62,7 @@ const chat = useChatStore();
 const simulationOpen = ref(false);
 const simulationChannelId = ref<string | null>(null);
 const simulationError = ref('');
+const simulating = ref(false);
 
 function openSimulation() {
   simulationChannelId.value = chat.activeChannel?.id ?? null;
@@ -63,14 +70,18 @@ function openSimulation() {
   simulationOpen.value = true;
 }
 
-function simulateInactivity() {
-  if (!simulationChannelId.value) return;
+async function simulateInactivity() {
+  if (!simulationChannelId.value || simulating.value) return;
+  simulating.value = true;
+  simulationError.value = '';
   try {
-    chat.simulateChannelInactivity(simulationChannelId.value);
+    await chat.simulateChannelInactivity(simulationChannelId.value);
     simulationOpen.value = false;
   } catch (error) {
     simulationError.value =
       error instanceof Error ? error.message : 'Unable to simulate inactivity.';
+  } finally {
+    simulating.value = false;
   }
 }
 </script>

@@ -28,6 +28,7 @@
       <ChatInput
         v-model="draft"
         :error="inputError"
+        :loading="submitting"
         :placeholder="
           chat.activeChannel
             ? 'Type a message or command'
@@ -63,6 +64,7 @@ const $q = useQuasar();
 const drawerOpen = ref(false);
 const draft = ref('');
 const inputError = ref('');
+const submitting = ref(false);
 const membersDialogOpen = ref(false);
 // Channel expiration is handled by the backend when the list is loaded.
 watch(
@@ -78,7 +80,9 @@ watch([draft, () => chat.activeChannelId], () => {
 });
 
 // UC4: command line parser.
-function onSubmit(text: string) {
+async function onSubmit(text: string) {
+  if (submitting.value) return;
+  submitting.value = true;
   inputError.value = '';
   const parsed = parseInput(text);
 
@@ -95,7 +99,7 @@ function onSubmit(text: string) {
         break;
 
       case 'join': {
-        const channel = chat.joinChannel(parsed.name, parsed.isPrivate);
+        const channel = await chat.joinChannel(parsed.name, parsed.isPrivate);
         draft.value = '';
         $q.notify({
           type: 'positive',
@@ -138,7 +142,7 @@ function onSubmit(text: string) {
           break;
         }
         const wasOwner = chat.activeChannel?.ownerId === auth.currentUser?.id;
-        chat.leaveChannel(chat.activeChannelId);
+        await chat.leaveChannel(chat.activeChannelId);
         draft.value = '';
         $q.notify({
           type: 'info',
@@ -152,7 +156,7 @@ function onSubmit(text: string) {
           inputError.value = 'No active channel.';
           break;
         }
-        chat.deleteChannel(chat.activeChannelId);
+        await chat.deleteChannel(chat.activeChannelId);
         draft.value = '';
         $q.notify({ type: 'info', message: 'Channel deleted.' });
         break;
@@ -164,6 +168,8 @@ function onSubmit(text: string) {
     }
   } catch (error) {
     inputError.value = error instanceof Error ? error.message : 'Something went wrong.';
+  } finally {
+    submitting.value = false;
   }
 }
 
