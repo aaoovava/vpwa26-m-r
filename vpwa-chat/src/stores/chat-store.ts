@@ -1,53 +1,11 @@
 import { acceptHMRUpdate, defineStore } from 'pinia';
-import type { Channel, ChannelInvitation } from '@/types/channel';
+import type { Channel, ChannelInvitation, ApiChannel } from '@/types/channel';
 import type { Message } from '@/types/message';
 import { useAuthStore } from '@/stores/auth-store';
 import { validateChannelName } from '@/utils/channel-name';
+import { apiRequest } from '@/utils/api';
 
 const CHANNEL_INACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
-
-function seedGeneralMessages(): Message[] {
-  const channelId = 'general';
-  const authors = ['roman', 'matej'];
-  const samples = [
-    'Hello everyone!',
-    'How is the project going?',
-    'I think we should refactor this.',
-    'Did you see the new update?',
-    'Let me check the docs.',
-    'Great work! 🎉',
-    'I will be back in 10 minutes.',
-    'Can someone review my PR?',
-    'Fixed the bug on line 42.',
-    'Who wants to pair program?',
-    'Meeting at 3pm, room 204.',
-    'The tests are passing now.',
-    'Let me push the changes.',
-    'Anyone online?',
-    'Good night!',
-  ];
-
-  const count = 100;
-  const now = Date.now();
-  const step = 60_000; // 1 minute apart
-  const messages: Message[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const authorId = authors[i % authors.length]!;
-    const text = samples[i % samples.length]!;
-    const createdAt = new Date(now - (count - i) * step).toISOString();
-
-    messages.push({
-      id: crypto.randomUUID(),
-      channelId,
-      authorId,
-      text,
-      createdAt,
-    });
-  }
-
-  return messages;
-}
 
 export const useChatStore = defineStore('chat', {
   state: (): {
@@ -55,48 +13,25 @@ export const useChatStore = defineStore('chat', {
     activeChannelId: string | null;
     messages: Message[];
     pendingInvitations: ChannelInvitation[];
+    channelsLoading: boolean;
+    channelsError: string;
+    channelsUserId: string | null;
+    channelsRequestId: string | null;
   } => ({
-    // Phase 1: mock channels. Phase 2: load channels from the backend.
-    channels: [
-      {
-        id: 'general',
-        name: 'general',
-        isPrivate: false,
-        ownerId: 'matej',
-        memberIds: ['roman', 'matej'],
-        createdAt: new Date().toISOString(),
-        lastMessageAt: null,
-      },
-      {
-        id: 'project',
-        name: 'project',
-        isPrivate: true,
-        ownerId: 'roman',
-        memberIds: ['roman', 'matej'],
-        createdAt: new Date().toISOString(),
-        lastMessageAt: null,
-      },
-      {
-        id: 'ideas',
-        name: 'ideas',
-        isPrivate: false,
-        ownerId: 'roman',
-        memberIds: ['roman'],
-        createdAt: new Date().toISOString(),
-        lastMessageAt: null,
-      },
-    ],
+    channels: [],
     activeChannelId: null,
-    // Phase 1: messages are kept in memory and reset on page reload.
-    messages: seedGeneralMessages(),
-    // Demo invitation: sign in as matej to see project highlighted at the top.
-    pendingInvitations: [{ channelId: 'project', userId: 'matej' }],
+    messages: [],
+    pendingInvitations: [],
+    channelsLoading: false,
+    channelsError: '',
+    channelsUserId: null,
+    channelsRequestId: null,
   }),
 
   getters: {
     myChannels(state): Channel[] {
       const user = useAuthStore().currentUser;
-      if (!user) return [];
+      if (!user || state.channelsUserId !== user.id) return [];
 
       const invitedIds = new Set(
         state.pendingInvitations
@@ -129,28 +64,84 @@ export const useChatStore = defineStore('chat', {
     },
 
     // UC4: /list command — returns the members of the active channel.
-activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
-  const channel = this.activeChannel;
-  if (!channel) return [];
+    activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
+      const channel = this.activeChannel;
+      if (!channel) return [];
 
-  const auth = useAuthStore();
-  return channel.memberIds
-    .map((id) => {
-      const user = auth.users.find((u) => u.id === id);
-      if (!user) return null;
-      return {
-        id: user.id,
-        nickName: user.nickName,
-        isOwner: channel.ownerId === user.id,
-      };
-    })
-    .filter(
-      (x): x is { id: string; nickName: string; isOwner: boolean } => x !== null,
-    );
+      const auth = useAuthStore();
+      return channel.memberIds
+        .map((id) => {
+          const user = auth.users.find((u) => u.id === id);
+          if (!user) return null;
+          return {
+            id: user.id,
+            nickName: user.nickName,
+            isOwner: channel.ownerId === user.id,
+          };
+        })
+        .filter((x): x is { id: string; nickName: string; isOwner: boolean } => x !== null);
     },
   },
 
   actions: {
+    async fetchChannels() {
+      const auth = useAuthStore();
+      const userId = auth.currentUser?.id;
+      const token = auth.token;
+      if (!userId || !token) {
+        this.$reset();
+        return;
+      }
+      if (this.channelsUserId !== userId) this.$reset();
+
+      const requestId = crypto.randomUUID();
+      this.channelsRequestId = requestId;
+      this.channelsUserId = userId;
+      this.channelsLoading = true;
+      this.channelsError = '';
+      const isCurrentRequest = () =>
+        this.channelsRequestId === requestId &&
+        auth.currentUser?.id === userId &&
+        auth.token === token;
+
+      try {
+        const data = await apiRequest<ApiChannel[]>('/channels');
+        // Ignore responses from requests made before logout or an account switch.
+        if (!isCurrentRequest()) return;
+        this.channels = data.map((channel) => ({
+          id: channel.id,
+          name: channel.name,
+          isPrivate: channel.isPrivate,
+          ownerId: channel.ownerId,
+          createdAt: channel.createdAt,
+          lastMessageAt: channel.lastMessageAt,
+          memberIds: channel.members
+            .filter((member) => !member.isBanned)
+            .map((member) => member.userId),
+        }));
+        if (!this.myChannels.some((channel) => channel.id === this.activeChannelId)) {
+          this.activeChannelId = null;
+        }
+        const channelIds = new Set(this.myChannels.map((channel) => channel.id));
+        this.messages = this.messages.filter((message) => channelIds.has(message.channelId));
+        this.pendingInvitations = this.pendingInvitations.filter((invitation) =>
+          channelIds.has(invitation.channelId),
+        );
+      } catch (error) {
+        if (!isCurrentRequest()) return;
+        this.channelsError = error instanceof Error ? error.message : 'Unable to load channels.';
+        this.channels = [];
+        this.activeChannelId = null;
+        this.messages = [];
+        this.pendingInvitations = [];
+      } finally {
+        if (isCurrentRequest()) {
+          this.channelsLoading = false;
+          this.channelsRequestId = null;
+        }
+      }
+    },
+
     // Prototype-only control for demonstrating automatic channel expiration.
     simulateChannelInactivity(channelId: string) {
       const channel = this.myChannels.find((item) => item.id === channelId);
@@ -285,9 +276,7 @@ activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
 
       if (existing) {
         if (existing.isPrivate && !existing.memberIds.includes(user.id)) {
-          throw new Error(
-            `Channel "${existing.name}" is private. Ask the owner to invite you.`,
-          );
+          throw new Error(`Channel "${existing.name}" is private. Ask the owner to invite you.`);
         }
         if (!existing.memberIds.includes(user.id)) {
           existing.memberIds.push(user.id);
@@ -334,9 +323,7 @@ activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
       const channel = this.activeChannel;
       if (!channel) throw new Error('Select a channel you belong to.');
 
-      const mentioned = auth.users.find(
-        (u) => u.nickName.toLowerCase() === nickName.toLowerCase(),
-      );
+      const mentioned = auth.users.find((u) => u.nickName.toLowerCase() === nickName.toLowerCase());
       if (!mentioned) throw new Error(`User "${nickName}" does not exist.`);
       if (!channel.memberIds.includes(mentioned.id)) {
         throw new Error(`User "${nickName}" is not a member of this channel.`);
@@ -360,7 +347,6 @@ activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
     },
 
     selectChannel(channelId: string) {
-      this.removeInactiveChannels();
       const channel = this.myChannels.find((channel) => channel.id === channelId);
       if (!channel) return;
 

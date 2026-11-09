@@ -3,7 +3,7 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 import routes from './routes';
 import { useAuthStore } from '@/stores/auth-store';
 
-export default defineRouter(function () {
+export default defineRouter(function ({ store }) {
   const Router = createRouter({
     scrollBehavior: () => ({ left: 0, top: 0 }),
     routes,
@@ -11,7 +11,7 @@ export default defineRouter(function () {
   });
 
   Router.beforeEach((to) => {
-    const auth = useAuthStore();
+    const auth = useAuthStore(store);
 
     // Route requires auth and user is not logged in
     if (to.meta.requiresAuth && !auth.isAuthenticated) {

@@ -3,12 +3,11 @@ import User from '#models/user'
 import Channel from '#models/channel'
 import ChannelMember from '#models/channel_member'
 import { randomUUID } from 'node:crypto'
-import hash from '@adonisjs/core/services/hash'
 
 export default class extends BaseSeeder {
   async run() {
     // 1. Створюємо користувачів (пароль: 'password123')
-    const password = await hash.make('password123')
+    const password = 'password123' // User model hashes passwords automatically
 
     const roman = await User.create({
       id: randomUUID(),

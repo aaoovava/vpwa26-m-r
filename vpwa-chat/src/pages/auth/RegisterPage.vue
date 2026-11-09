@@ -10,12 +10,7 @@
       :flat="$q.screen.xs"
     >
       <q-card-section class="bg-primary text-white text-center q-pa-lg">
-        <q-avatar
-          size="60px"
-          color="white"
-          text-color="primary"
-          icon="person_add"
-        />
+        <q-avatar size="60px" color="white" text-color="primary" icon="person_add" />
         <div class="text-h5 text-weight-medium q-mt-md">Create account</div>
         <div class="text-body2 text-white" style="opacity: 0.85">
           Join vpwa-chat in a few seconds
@@ -186,15 +181,17 @@ const form = reactive({
 });
 
 async function onSubmit() {
+  if (loading.value) return;
   errorMessage.value = '';
   loading.value = true;
 
   try {
-    auth.register({
+    await auth.register({
       firstName: form.firstName,
       lastName: form.lastName,
       nickName: form.nickName,
-      email: form.email,
+      email: form.email.trim(),
+      password: form.password,
     });
 
     $q.notify({

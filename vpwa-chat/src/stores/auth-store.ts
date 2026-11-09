@@ -1,116 +1,139 @@
 import { acceptHMRUpdate, defineStore } from 'pinia';
 import type { NotificationPreference, User } from '@/types/user';
+import { ApiError, apiRequest, TOKEN_STORAGE_KEY } from '@/utils/api';
 
 export interface RegisterPayload {
   firstName: string;
   lastName: string;
   nickName: string;
   email: string;
+  password: string;
 }
 
-// Phase 1: mock users. Phase 2: real backend.
-const mockUsers: User[] = [
-  {
-    id: 'roman',
-    nickName: 'roman',
-    firstName: 'Roman',
-    lastName: 'Kováč',
-    email: 'roman@test.sk',
-    status: 'online',
-    notificationPreference: 'all',
-  },
-  {
-    id: 'matej',
-    nickName: 'matej',
-    firstName: 'Matej',
-    lastName: 'Horváth',
-    email: 'matej@test.sk',
-    status: 'online',
-    notificationPreference: 'all',
-  },
-];
+type ApiUser = Omit<User, 'notificationPreference'> & {
+  notificationPreference: 'all' | 'mention';
+};
+interface AuthResponse {
+  user: ApiUser;
+  token: string;
+}
 
-const STORAGE_KEY = 'vpwa-chat.currentUser';
+// Preserve the visual settings locally until profile updates have an API endpoint.
+const SETTINGS_KEY = 'vpwa-chat.userSettings';
+function toUser(user: ApiUser): User {
+  return {
+    ...user,
+    notificationPreference: user.notificationPreference === 'mention' ? 'mentions' : 'all',
+  };
+}
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     currentUser: null as User | null,
-    users: [...mockUsers] as User[],
+    // Compatibility for chat components; channel members will come from the API next.
+    users: [] as User[],
+    token: localStorage.getItem(TOKEN_STORAGE_KEY),
+    sessionError: '',
   }),
 
   getters: {
-    isAuthenticated: (state) => state.currentUser !== null,
+    isAuthenticated: (state) => state.currentUser !== null && state.token !== null,
   },
 
   actions: {
-    // Restore session from localStorage (so F5 keeps you logged in)
-    restoreSession() {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
+    setCurrentUser(data: ApiUser) {
+      const user = toUser(data);
       try {
-        this.currentUser = JSON.parse(raw) as User;
-        this.currentUser.notificationPreference =
-          this.currentUser.notificationPreference === 'mentions' ? 'mentions' : 'all';
+        const settings = JSON.parse(
+          localStorage.getItem(`${SETTINGS_KEY}.${user.id}`) ?? 'null',
+        ) as { status?: User['status']; notificationPreference?: NotificationPreference } | null;
+        if (settings?.status && ['online', 'dnd', 'offline'].includes(settings.status)) {
+          user.status = settings.status;
+        }
+        if (
+          settings?.notificationPreference === 'all' ||
+          settings?.notificationPreference === 'mentions'
+        ) {
+          user.notificationPreference = settings.notificationPreference;
+        }
       } catch {
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(`${SETTINGS_KEY}.${user.id}`);
+      }
+      this.currentUser = user;
+      this.users = [user];
+      this.sessionError = '';
+    },
+
+    clearSession() {
+      this.currentUser = null;
+      this.users = [];
+      this.token = null;
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem('vpwa-chat.currentUser');
+    },
+
+    async restoreSession() {
+      // Legacy prototype sessions are not proof of authentication.
+      localStorage.removeItem('vpwa-chat.currentUser');
+      if (!this.token) return;
+      try {
+        this.setCurrentUser(await apiRequest<ApiUser>('/auth/me'));
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          this.clearSession();
+        } else {
+          this.currentUser = null;
+          this.sessionError = error instanceof Error ? error.message : 'Unable to restore session.';
+        }
+      }
+    },
+
+    async login(nickName: string, password: string) {
+      const data = await apiRequest<AuthResponse>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ nickName: nickName.trim(), password }),
+      });
+      localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
+      this.token = data.token;
+      this.setCurrentUser(data.user);
+    },
+
+    async register(payload: RegisterPayload) {
+      const data = await apiRequest<AuthResponse>('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
+      this.token = data.token;
+      this.setCurrentUser(data.user);
+    },
+
+    async logout() {
+      try {
+        await apiRequest('/auth/logout', { method: 'POST' });
+      } finally {
+        this.clearSession();
       }
     },
 
     persistSession() {
-      if (this.currentUser) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.currentUser));
-      } else {
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    },
-
-    login(nickName: string) {
-      const user = this.users.find((u) => u.nickName.toLowerCase() === nickName.toLowerCase());
-      if (!user) {
-        throw new Error(`User "${nickName}" does not exist`);
-      }
-      this.currentUser = user;
-      this.persistSession();
-    },
-
-    register(payload: RegisterPayload) {
-      const { nickName, email } = payload;
-
-      if (this.users.some((u) => u.nickName.toLowerCase() === nickName.toLowerCase())) {
-        throw new Error('Nickname is already taken');
-      }
-      if (this.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
-        throw new Error('Email is already registered');
-      }
-
-      const newUser: User = {
-        id: crypto.randomUUID(),
-        ...payload,
-        status: 'online',
-        notificationPreference: 'all',
-      };
-      this.users.push(newUser);
-      this.currentUser = newUser;
-      this.persistSession();
-    },
-
-    logout() {
-      this.currentUser = null;
-      this.persistSession();
+      if (!this.currentUser) return;
+      const { id, status, notificationPreference } = this.currentUser;
+      localStorage.setItem(
+        `${SETTINGS_KEY}.${id}`,
+        JSON.stringify({ status, notificationPreference }),
+      );
     },
 
     setStatus(status: User['status']) {
-      if (this.currentUser) {
-        this.currentUser.status = status;
-        this.persistSession();
-      }
+      if (!this.currentUser) return;
+      this.currentUser.status = status;
+      this.persistSession();
     },
 
     setNotificationPreference(preference: NotificationPreference) {
       if (!this.currentUser) return;
       this.currentUser.notificationPreference = preference;
-      const user = this.users.find((item) => item.id === this.currentUser?.id);
-      if (user) user.notificationPreference = preference;
       this.persistSession();
     },
   },

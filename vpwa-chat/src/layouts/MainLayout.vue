@@ -45,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { useQuasar } from 'quasar';
 import { useRouter } from 'vue-router';
 import ChannelList from '@/components/chat/ChannelList.vue';
@@ -64,22 +64,14 @@ const drawerOpen = ref(false);
 const draft = ref('');
 const inputError = ref('');
 const membersDialogOpen = ref(false);
-let cleanupInterval: ReturnType<typeof setInterval> | undefined;
-
-function checkInactiveChannels() {
-  chat.removeInactiveChannels();
-}
-
-onMounted(() => {
-  checkInactiveChannels();
-  cleanupInterval = setInterval(checkInactiveChannels, 60_000);
-  document.addEventListener('visibilitychange', checkInactiveChannels);
-});
-
-onUnmounted(() => {
-  clearInterval(cleanupInterval);
-  document.removeEventListener('visibilitychange', checkInactiveChannels);
-});
+// Channel expiration is handled by the backend when the list is loaded.
+watch(
+  () => auth.currentUser?.id,
+  () => {
+    void chat.fetchChannels();
+  },
+  { immediate: true },
+);
 
 watch([draft, () => chat.activeChannelId], () => {
   inputError.value = '';
@@ -180,7 +172,15 @@ function onChannelSelected() {
 }
 
 async function onLogout() {
-  auth.logout();
+  try {
+    await auth.logout();
+  } catch {
+    $q.notify({
+      type: 'warning',
+      message: 'Signed out locally. Server logout could not be confirmed.',
+    });
+  }
+  chat.$reset();
   await router.push({ name: 'login' });
 }
 </script>

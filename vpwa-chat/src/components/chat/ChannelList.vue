@@ -1,6 +1,17 @@
 <template>
   <q-list padding aria-label="Channels">
-    <q-item-label header>Channels</q-item-label>
+    <div class="row items-center q-pr-sm">
+      <q-item-label header class="col">Channels</q-item-label>
+      <q-btn
+        flat
+        round
+        dense
+        icon="refresh"
+        aria-label="Refresh channels"
+        :disable="chat.channelsLoading"
+        @click="chat.fetchChannels()"
+      />
+    </div>
 
     <div class="q-px-md q-pb-sm">
       <q-btn
@@ -12,6 +23,22 @@
         @click="createDialogOpen = true"
       />
     </div>
+
+    <q-item v-if="chat.channelsLoading" role="status">
+      <q-item-section avatar><q-spinner color="primary" /></q-item-section>
+      <q-item-section>Loading channels...</q-item-section>
+    </q-item>
+    <q-banner v-if="chat.channelsError" class="bg-red-1 text-negative q-ma-sm" role="alert">
+      {{ chat.channelsError }}
+      <template #action>
+        <q-btn
+          flat
+          label="Try again"
+          :disable="chat.channelsLoading"
+          @click="chat.fetchChannels()"
+        />
+      </template>
+    </q-banner>
 
     <q-item
       v-for="channel in chat.myChannels"
@@ -60,7 +87,7 @@
       </q-item-section>
     </q-item>
 
-    <q-item v-if="chat.myChannels.length === 0">
+    <q-item v-if="!chat.channelsLoading && !chat.channelsError && chat.myChannels.length === 0">
       <q-item-section class="text-grey-7">You haven't joined any channels yet.</q-item-section>
     </q-item>
   </q-list>

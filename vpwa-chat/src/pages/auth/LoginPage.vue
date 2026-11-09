@@ -12,9 +12,7 @@
       <q-card-section class="bg-primary text-white text-center q-pa-lg">
         <q-avatar size="60px" color="white" text-color="primary" icon="forum" />
         <div class="text-h5 text-weight-medium q-mt-md">Sign in</div>
-        <div class="text-body2 text-white" style="opacity: 0.85">
-          Welcome back to vpwa-chat
-        </div>
+        <div class="text-body2 text-white" style="opacity: 0.85">Welcome back to vpwa-chat</div>
       </q-card-section>
 
       <q-card-section class="q-pa-lg">
@@ -51,12 +49,7 @@
             </template>
           </q-input>
 
-          <q-banner
-            v-if="errorMessage"
-            dense
-            rounded
-            class="bg-red-1 text-red-9"
-          >
+          <q-banner v-if="errorMessage" dense rounded class="bg-red-1 text-red-9">
             <template #avatar>
               <q-icon name="error" color="red-9" />
             </template>
@@ -106,7 +99,7 @@ const auth = useAuthStore();
 
 const loading = ref(false);
 const showPassword = ref(false);
-const errorMessage = ref('');
+const errorMessage = ref(auth.sessionError);
 
 const form = reactive({
   nickName: '',
@@ -114,12 +107,12 @@ const form = reactive({
 });
 
 async function onSubmit() {
+  if (loading.value) return;
   errorMessage.value = '';
   loading.value = true;
 
   try {
-    // Phase 1: password is not validated yet
-    auth.login(form.nickName);
+    await auth.login(form.nickName, form.password);
 
     $q.notify({
       type: 'positive',
