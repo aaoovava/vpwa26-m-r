@@ -7,11 +7,13 @@
         round
         dense
         icon="refresh"
-        aria-label="Refresh channels"
-        :disable="chat.channelsLoading"
-        @click="chat.fetchChannels()"
+        aria-label="Refresh channels and invitations"
+        :disable="chat.channelsLoading || chat.invitationsLoading"
+        @click="chat.refreshChannels()"
       />
     </div>
+
+    <InvitationList @accepted="emit('selected')" />
 
     <div class="q-px-md q-pb-sm">
       <q-btn
@@ -34,8 +36,8 @@
         <q-btn
           flat
           label="Try again"
-          :disable="chat.channelsLoading"
-          @click="chat.fetchChannels()"
+          :disable="chat.channelsLoading || chat.invitationsLoading"
+          @click="chat.refreshChannels()"
         />
       </template>
     </q-banner>
@@ -46,7 +48,6 @@
       clickable
       :active="chat.activeChannelId === channel.id"
       active-class="bg-blue-1 text-primary"
-      :class="{ 'bg-amber-1': chat.invitedChannelIds.includes(channel.id) }"
       @click="selectChannel(channel.id)"
     >
       <q-item-section avatar>
@@ -56,9 +57,6 @@
       <q-item-section>
         <q-item-label class="channel-name">{{ channel.name }}</q-item-label>
         <q-item-label caption>{{ channel.isPrivate ? 'Private' : 'Public' }}</q-item-label>
-        <q-item-label v-if="chat.invitedChannelIds.includes(channel.id)">
-          <q-badge color="orange-9" label="New invitation" />
-        </q-item-label>
       </q-item-section>
       <q-item-section side>
         <q-btn
@@ -127,6 +125,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import CreateChannelDialog from '@/components/chat/CreateChannelDialog.vue';
+import InvitationList from '@/components/chat/InvitationList.vue';
 import { useChatStore } from '@/stores/chat-store';
 import { useAuthStore } from '@/stores/auth-store';
 

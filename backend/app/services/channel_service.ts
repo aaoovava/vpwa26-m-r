@@ -10,21 +10,24 @@ export default class ChannelService {
    * Join an existing channel or create a new one.
    */
   async joinChannel(userId: string, channelName: string, isPrivate: boolean = false) {
-    const existing = await Channel.findBy('name', channelName)
+    if (typeof channelName !== 'string' || !channelName.trim() || /\s/.test(channelName.trim())) {
+      throw new Error('Channel name is required and cannot contain spaces.')
+    }
+    channelName = channelName.trim()
+    const existing = await Channel.query().whereRaw('LOWER(name) = ?', [channelName.toLowerCase()]).first()
 
     if (existing) {
-      if (existing.isPrivate) throw new Error('Channel is private. You must be invited.')
-
       const isMember = await ChannelMember.query()
         .where('channel_id', existing.id)
         .where('user_id', userId)
         .first()
 
+      if (isMember?.isBanned) throw new Error('You are banned from this channel.')
       if (!isMember) {
+        if (existing.isPrivate) throw new Error('Channel is private. Accept an invitation first.')
         await ChannelMember.create({ channelId: existing.id, userId, isBanned: false, banCount: 0 })
-      } else if (isMember.isBanned) {
-        throw new Error('You are banned from this channel.')
       }
+      await ChannelInvitation.query().where('channel_id', existing.id).where('invitee_id', userId).delete()
       return existing
     }
 
@@ -52,11 +55,19 @@ export default class ChannelService {
    */
   async inviteUser(inviterId: string, channelId: string, targetNickName: string) {
     const channel = await Channel.findOrFail(channelId)
-    const target = await User.findByOrFail('nick_name', targetNickName)
+    const inviter = await ChannelMember.query().where('channel_id', channelId)
+      .where('user_id', inviterId).where('is_banned', false).first()
+    if (!inviter) throw new Error('You are not a member of this channel.')
 
     if (channel.isPrivate && channel.ownerId !== inviterId) {
       throw new Error('Only the owner can invite users to a private channel.')
     }
+    if (typeof targetNickName !== 'string' || !targetNickName.trim()) {
+      throw new Error('Nickname is required.')
+    }
+    const target = await User.query()
+      .whereRaw('LOWER(nick_name) = ?', [targetNickName.trim().toLowerCase()]).first()
+    if (!target) throw new Error('User does not exist.')
 
     const member = await ChannelMember.query()
       .where('channel_id', channel.id)
@@ -65,16 +76,21 @@ export default class ChannelService {
 
     if (member) {
       if (member.isBanned) {
+        if (channel.ownerId !== inviterId) throw new Error('Only the owner can restore access for a banned user.')
         // Owner can unban a user
         member.isBanned = false
         member.banCount = 0
         await member.save()
         await KickVote.query().where('channel_id', channel.id).where('target_id', target.id).delete()
+        await ChannelInvitation.query().where('channel_id', channel.id).where('invitee_id', target.id).delete()
         return { message: 'User unbanned and added back.' }
       }
       throw new Error('User is already a member.')
     }
 
+    const pending = await ChannelInvitation.query().where('channel_id', channel.id)
+      .where('invitee_id', target.id).where('acknowledged', false).first()
+    if (pending) throw new Error('User already has a pending invitation.')
     await ChannelInvitation.create({
       channelId: channel.id,
       inviterId,
@@ -91,7 +107,7 @@ export default class ChannelService {
     return await ChannelInvitation.query()
       .where('invitee_id', userId)
       .where('acknowledged', false)
-      .preload('channel', (q) => q.preload('members'))
+      .preload('channel')
       .preload('inviter')
       .orderBy('created_at', 'desc')
   }
@@ -109,6 +125,7 @@ export default class ChannelService {
     return await db.transaction(async (trx) => {
       // 1. Add to channel members
       const existingMember = await ChannelMember.query()
+        .useTransaction(trx)
         .where('channel_id', invitation.channelId)
         .where('user_id', userId)
         .first()
@@ -122,10 +139,7 @@ export default class ChannelService {
         member.banCount = 0
         await member.save()
       } else if (existingMember.isBanned) {
-        existingMember.useTransaction(trx)
-        existingMember.isBanned = false
-        existingMember.banCount = 0
-        await existingMember.save()
+        throw new Error('You are banned from this channel. Ask the owner to restore access.')
       }
 
       // 2. Delete the invitation

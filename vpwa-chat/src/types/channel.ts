@@ -13,11 +13,23 @@ export interface ApiChannel extends Omit<Channel, 'memberIds'> {
   members: {
     userId: string;
     isBanned: boolean;
+    user: { id: string; nickName: string };
   }[];
 }
 
-// An invitation adds membership immediately; this tracks its unread indicator.
+export interface ChannelMemberInfo {
+  id: string;
+  nickName: string;
+  isOwner: boolean;
+}
+
+// Pending invitations do not grant membership until accepted.
 export interface ChannelInvitation {
+  id: string;
   channelId: string;
-  userId: string;
+  inviterId: string;
+  inviteeId: string;
+  createdAt: string;
+  channel: Omit<Channel, 'memberIds'>;
+  inviter: { id: string; nickName: string };
 }

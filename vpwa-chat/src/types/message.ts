@@ -4,5 +4,6 @@ export interface Message {
   authorId: string;
   text: string;
   createdAt: string; // ISO 8601 timestamp
-  mentions?: string[];
+  author: { id: string; nickName: string };
+  mentions: { userId: string }[];
 }

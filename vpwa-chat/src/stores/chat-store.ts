@@ -1,13 +1,15 @@
 import { acceptHMRUpdate, defineStore } from 'pinia';
-import type { Channel, ChannelInvitation, ApiChannel } from '@/types/channel';
+import type { Channel, ChannelInvitation, ApiChannel, ChannelMemberInfo } from '@/types/channel';
 import type { Message } from '@/types/message';
 import { useAuthStore } from '@/stores/auth-store';
 import { validateChannelName } from '@/utils/channel-name';
 import { api } from '@/boot/axios';
+import { isAxiosError } from 'axios';
 
 export const useChatStore = defineStore('chat', {
   state: (): {
     channels: Channel[];
+    channelMembers: Record<string, ChannelMemberInfo[]>;
     activeChannelId: string | null;
     messages: Message[];
     pendingInvitations: ChannelInvitation[];
@@ -15,8 +17,15 @@ export const useChatStore = defineStore('chat', {
     channelsError: string;
     channelsUserId: string | null;
     channelsRequestId: string | null;
+    invitationsLoading: boolean;
+    invitationsError: string;
+    invitationsRequestId: string | null;
+    messagesLoading: boolean;
+    messagesError: string;
+    messagesRequestId: string | null;
   } => ({
     channels: [],
+    channelMembers: {},
     activeChannelId: null,
     messages: [],
     pendingInvitations: [],
@@ -24,6 +33,12 @@ export const useChatStore = defineStore('chat', {
     channelsError: '',
     channelsUserId: null,
     channelsRequestId: null,
+    invitationsLoading: false,
+    invitationsError: '',
+    invitationsRequestId: null,
+    messagesLoading: false,
+    messagesError: '',
+    messagesRequestId: null,
   }),
 
   getters: {
@@ -31,22 +46,12 @@ export const useChatStore = defineStore('chat', {
       const user = useAuthStore().currentUser;
       if (!user || state.channelsUserId !== user.id) return [];
 
-      const invitedIds = new Set(
-        state.pendingInvitations
-          .filter((invitation) => invitation.userId === user.id)
-          .map((invitation) => invitation.channelId),
-      );
-      return state.channels
-        .filter((channel) => channel.memberIds.includes(user.id))
-        .sort((a, b) => Number(invitedIds.has(b.id)) - Number(invitedIds.has(a.id)));
+      return state.channels.filter((channel) => channel.memberIds.includes(user.id));
     },
 
-    invitedChannelIds(state): string[] {
-      const user = useAuthStore().currentUser;
-      if (!user) return [];
-      return state.pendingInvitations
-        .filter((invitation) => invitation.userId === user.id)
-        .map((invitation) => invitation.channelId);
+    myInvitations(state): ChannelInvitation[] {
+      const userId = useAuthStore().currentUser?.id;
+      return state.pendingInvitations.filter((invitation) => invitation.inviteeId === userId);
     },
 
     activeChannel(): Channel | null {
@@ -61,28 +66,16 @@ export const useChatStore = defineStore('chat', {
       return this.messages.filter((message) => message.channelId === channel.id);
     },
 
-    // UC4: /list command — returns the members of the active channel.
-    activeChannelMembers(): { id: string; nickName: string; isOwner: boolean }[] {
+    activeChannelMembers(): ChannelMemberInfo[] {
       const channel = this.activeChannel;
       if (!channel) return [];
 
-      const auth = useAuthStore();
-      return channel.memberIds
-        .map((id) => {
-          const user = auth.users.find((u) => u.id === id);
-          if (!user) return null;
-          return {
-            id: user.id,
-            nickName: user.nickName,
-            isOwner: channel.ownerId === user.id,
-          };
-        })
-        .filter((x): x is { id: string; nickName: string; isOwner: boolean } => x !== null);
+      return this.channelMembers[channel.id] ?? [];
     },
   },
 
   actions: {
-    async fetchChannels() {
+    async fetchChannels(background = false) {
       const auth = useAuthStore();
       const userId = auth.currentUser?.id;
       const token = auth.token;
@@ -95,7 +88,7 @@ export const useChatStore = defineStore('chat', {
       const requestId = crypto.randomUUID();
       this.channelsRequestId = requestId;
       this.channelsUserId = userId;
-      this.channelsLoading = true;
+      this.channelsLoading = !background;
       this.channelsError = '';
       const isCurrentRequest = () =>
         this.channelsRequestId === requestId &&
@@ -106,6 +99,18 @@ export const useChatStore = defineStore('chat', {
         const { data } = await api.get<ApiChannel[]>('/channels');
         // Ignore responses from requests made before logout or an account switch.
         if (!isCurrentRequest()) return;
+        this.channelMembers = Object.fromEntries(
+          data.map((channel) => [
+            channel.id,
+            channel.members
+              .filter((member) => !member.isBanned)
+              .map((member) => ({
+                id: member.user.id,
+                nickName: member.user.nickName,
+                isOwner: channel.ownerId === member.user.id,
+              })),
+          ]),
+        );
         this.channels = data.map((channel) => ({
           id: channel.id,
           name: channel.name,
@@ -122,16 +127,13 @@ export const useChatStore = defineStore('chat', {
         }
         const channelIds = new Set(this.myChannels.map((channel) => channel.id));
         this.messages = this.messages.filter((message) => channelIds.has(message.channelId));
-        this.pendingInvitations = this.pendingInvitations.filter((invitation) =>
-          channelIds.has(invitation.channelId),
-        );
       } catch (error) {
         if (!isCurrentRequest()) return;
         this.channelsError = error instanceof Error ? error.message : 'Unable to load channels.';
-        this.channels = [];
-        this.activeChannelId = null;
-        this.messages = [];
-        this.pendingInvitations = [];
+        if (isAxiosError(error) && error.response?.status === 401) {
+          auth.clearSession();
+          this.$reset();
+        }
       } finally {
         if (isCurrentRequest()) {
           this.channelsLoading = false;
@@ -150,6 +152,7 @@ export const useChatStore = defineStore('chat', {
     removeChannelLocally(channelId: string) {
       this.invalidateChannelListRequest();
       this.channels = this.channels.filter((channel) => channel.id !== channelId);
+      delete this.channelMembers[channelId];
       this.messages = this.messages.filter((message) => message.channelId !== channelId);
       this.pendingInvitations = this.pendingInvitations.filter(
         (invitation) => invitation.channelId !== channelId,
@@ -167,27 +170,70 @@ export const useChatStore = defineStore('chat', {
       if (auth.token === token) this.removeChannelLocally(channelId);
     },
 
-    inviteUser(channelId: string, nickName: string) {
+    async refreshChannels(background = false) {
+      await this.fetchChannels(background);
+      await this.fetchInvitations(background);
+    },
+
+    async fetchInvitations(background = false) {
+      const auth = useAuthStore();
+      const userId = auth.currentUser?.id;
+      const token = auth.token;
+      if (!userId || !token) return;
+      const requestId = crypto.randomUUID();
+      this.invitationsRequestId = requestId;
+      this.invitationsLoading = !background;
+      this.invitationsError = '';
+      const isCurrentRequest = () =>
+        this.invitationsRequestId === requestId &&
+        auth.currentUser?.id === userId &&
+        auth.token === token;
+      try {
+        const { data } = await api.get<ChannelInvitation[]>('/invitations');
+        if (isCurrentRequest()) this.pendingInvitations = data;
+      } catch (error) {
+        if (isCurrentRequest()) {
+          this.invitationsError =
+            error instanceof Error ? error.message : 'Unable to load invitations.';
+        }
+      } finally {
+        if (isCurrentRequest()) {
+          this.invitationsLoading = false;
+          this.invitationsRequestId = null;
+        }
+      }
+    },
+
+    async inviteUser(channelId: string, nickName: string): Promise<{ message: string }> {
       const auth = useAuthStore();
       const user = auth.currentUser;
       if (!user) throw new Error('Sign in to invite a user.');
-
       const channel = this.myChannels.find((item) => item.id === channelId);
       if (!channel) throw new Error('You are not a member of this channel.');
       if (channel.isPrivate && channel.ownerId !== user.id) {
         throw new Error('Only the owner can invite users to a private channel.');
       }
+      const { data } = await api.post<{ message: string }>(`/channels/${channelId}/invite`, {
+        nickName: nickName.trim(),
+      });
+      return data;
+    },
 
-      const invitedUser = auth.users.find(
-        (item) => item.nickName.toLowerCase() === nickName.trim().toLowerCase(),
-      );
-      if (!invitedUser) throw new Error('User does not exist.');
-      if (channel.memberIds.includes(invitedUser.id)) {
-        throw new Error('User is already a member of this channel.');
+    async respondToInvitation(invitationId: string, accept: boolean) {
+      const auth = useAuthStore();
+      const token = auth.token;
+      const invitation = this.myInvitations.find((item) => item.id === invitationId);
+      if (!invitation) throw new Error('Invitation is no longer available. Refresh the list.');
+      await api.post(`/invitations/${invitationId}/${accept ? 'accept' : 'reject'}`);
+      if (auth.token !== token) return;
+      this.invitationsRequestId = null;
+      this.invitationsLoading = false;
+      this.invitationsError = '';
+      this.pendingInvitations = this.pendingInvitations.filter((item) => item.id !== invitationId);
+      if (accept) {
+        await this.fetchChannels();
+        if (auth.token === token) this.selectChannel(invitation.channelId);
       }
-
-      channel.memberIds.push(invitedUser.id);
-      this.pendingInvitations.push({ channelId, userId: invitedUser.id });
     },
 
     async deleteChannel(channelId: string) {
@@ -230,90 +276,107 @@ export const useChatStore = defineStore('chat', {
         this.invalidateChannelListRequest();
         this.channelsUserId = user.id;
         this.channels = [channel, ...this.channels.filter((item) => item.id !== channel.id)];
+        this.channelMembers[channel.id] = [{ id: user.id, nickName: user.nickName, isOwner: true }];
         this.activeChannelId = channel.id;
       }
       return channel;
     },
 
-    // UC4: /join command — join an existing public channel or create a new one.
+    // /join creates a channel or joins an existing public channel on the server.
     async joinChannel(name: string, isPrivate: boolean): Promise<Channel> {
-      const user = useAuthStore().currentUser;
-      if (!user) throw new Error('Sign in to join a channel.');
-
-      const channelName = validateChannelName(name);
-
-      const existing = this.channels.find(
-        (c) => c.name.toLowerCase() === channelName.toLowerCase(),
-      );
-
-      if (existing) {
-        if (existing.isPrivate && !existing.memberIds.includes(user.id)) {
-          throw new Error(`Channel "${existing.name}" is private. Ask the owner to invite you.`);
-        }
-        if (!existing.memberIds.includes(user.id)) {
-          existing.memberIds.push(user.id);
-        }
-        this.activeChannelId = existing.id;
-        return existing;
-      }
-
-      return this.createChannel(channelName, isPrivate);
-    },
-
-    sendMessage(text: string): Message {
-      const user = useAuthStore().currentUser;
-      if (!user) throw new Error('Sign in to send a message.');
-
-      // activeChannel also verifies that the current user is a member.
-      const channel = this.activeChannel;
-      if (!channel) throw new Error('Select a channel you belong to.');
-
-      const content = text.trim();
-      if (!content) throw new Error('Message cannot be empty.');
-
-      const message: Message = {
-        id: crypto.randomUUID(),
-        channelId: channel.id,
-        authorId: user.id,
-        text: content,
-        createdAt: new Date().toISOString(),
-      };
-
-      this.messages.push(message);
-      channel.lastMessageAt = message.createdAt;
-      return message;
-    },
-
-    // UC6: @nickname text — send a message that mentions a specific user.
-    sendMention(nickName: string, text: string): Message {
       const auth = useAuthStore();
       const user = auth.currentUser;
-      if (!user) throw new Error('Sign in to send a message.');
-
-      const channel = this.activeChannel;
-      if (!channel) throw new Error('Select a channel you belong to.');
-
-      const mentioned = auth.users.find((u) => u.nickName.toLowerCase() === nickName.toLowerCase());
-      if (!mentioned) throw new Error(`User "${nickName}" does not exist.`);
-      if (!channel.memberIds.includes(mentioned.id)) {
-        throw new Error(`User "${nickName}" is not a member of this channel.`);
+      const token = auth.token;
+      if (!user) throw new Error('Sign in to join a channel.');
+      const channelName = validateChannelName(name);
+      const { data } = await api.post<Omit<Channel, 'memberIds'>>('/channels/join', {
+        channelName,
+        isPrivate,
+      });
+      const channel: Channel = { ...data, memberIds: [user.id] };
+      if (auth.token === token) {
+        this.invalidateChannelListRequest();
+        this.channelsUserId = user.id;
+        const existingIndex = this.channels.findIndex((item) => item.id === channel.id);
+        if (existingIndex === -1) this.channels.push(channel);
+        this.activeChannelId = channel.id;
+        // The backend removes redundant pending invitations when joining.
+        this.invitationsRequestId = null;
+        this.invitationsLoading = false;
+        this.pendingInvitations = this.pendingInvitations.filter(
+          (item) => item.channelId !== channel.id,
+        );
+        await this.fetchChannels();
+        if (auth.token === token) this.selectChannel(channel.id);
       }
+      return channel;
+    },
 
+    resetMessageView() {
+      this.messagesRequestId = null;
+      this.messagesLoading = false;
+      this.messagesError = '';
+      this.messages = [];
+    },
+
+    async fetchMessages(channelId: string, background = false) {
+      const auth = useAuthStore();
+      const token = auth.token;
+      if (!token || this.activeChannel?.id !== channelId || this.messagesRequestId) return;
+      const requestId = crypto.randomUUID();
+      this.messagesRequestId = requestId;
+      this.messagesLoading = !background;
+      const isCurrentRequest = () =>
+        this.messagesRequestId === requestId &&
+        auth.token === token &&
+        this.activeChannel?.id === channelId;
+      try {
+        const { data } = await api.get<Message[]>(`/channels/${channelId}/messages`);
+        if (!isCurrentRequest()) return;
+        // A full server snapshot replaces the current history without accumulating duplicates.
+        this.messages = data;
+        this.messagesError = '';
+      } catch (error) {
+        if (!isCurrentRequest()) return;
+        const message = error instanceof Error ? error.message : 'Unable to load messages.';
+        if (
+          isAxiosError(error) &&
+          (error.response?.status === 403 || error.response?.status === 404)
+        ) {
+          this.removeChannelLocally(channelId);
+        }
+        this.messagesError = message;
+      } finally {
+        if (this.messagesRequestId === requestId) {
+          this.messagesLoading = false;
+          this.messagesRequestId = null;
+        }
+      }
+    },
+
+    async sendMessage(channelId: string, text: string): Promise<Message> {
+      const auth = useAuthStore();
+      const token = auth.token;
+      if (!auth.currentUser) throw new Error('Sign in to send a message.');
+      if (!this.myChannels.some((channel) => channel.id === channelId)) {
+        throw new Error('Select a channel you belong to.');
+      }
       const content = text.trim();
       if (!content) throw new Error('Message cannot be empty.');
-
-      const message: Message = {
-        id: crypto.randomUUID(),
-        channelId: channel.id,
-        authorId: user.id,
+      const { data } = await api.post<Message>(`/channels/${channelId}/messages`, {
         text: content,
-        createdAt: new Date().toISOString(),
-        mentions: [mentioned.id],
-      };
-
-      this.messages.push(message);
-      channel.lastMessageAt = message.createdAt;
-      return message;
+      });
+      if (auth.token === token && this.activeChannel?.id === channelId) {
+        // Ignore any older GET response that may not include this just-saved message.
+        this.messagesRequestId = null;
+        this.messagesLoading = false;
+        this.messagesError = '';
+        this.messages = [...this.messages.filter((message) => message.id !== data.id), data].sort(
+          (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+        );
+        this.activeChannel.lastMessageAt = data.createdAt;
+      }
+      return data;
     },
 
     selectChannel(channelId: string) {
@@ -321,10 +384,6 @@ export const useChatStore = defineStore('chat', {
       if (!channel) return;
 
       this.activeChannelId = channel.id;
-      const userId = useAuthStore().currentUser?.id;
-      this.pendingInvitations = this.pendingInvitations.filter(
-        (invitation) => invitation.channelId !== channelId || invitation.userId !== userId,
-      );
     },
   },
 });

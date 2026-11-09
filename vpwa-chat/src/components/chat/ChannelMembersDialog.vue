@@ -8,9 +8,7 @@
       </q-card-section>
 
       <q-card-section>
-        <div v-if="members.length === 0" class="text-grey-7">
-          No members to show.
-        </div>
+        <div v-if="members.length === 0" class="text-grey-7">No members to show.</div>
 
         <q-list v-else separator>
           <q-item v-for="member in members" :key="member.id">
@@ -58,27 +56,22 @@
 <script setup lang="ts">
 import { useAuthStore } from '@/stores/auth-store';
 import { getStatusOption } from '@/types/user-status';
-
-interface MemberInfo {
-  id: string;
-  nickName: string;
-  isOwner: boolean;
-}
+import type { ChannelMemberInfo } from '@/types/channel';
 
 defineProps<{
   channelName: string;
-  members: MemberInfo[];
+  members: ChannelMemberInfo[];
 }>();
 
 const open = defineModel<boolean>({ default: false });
 const auth = useAuthStore();
 
-function isCurrentUser(member: MemberInfo): boolean {
+function isCurrentUser(member: ChannelMemberInfo): boolean {
   return member.id === auth.currentUser?.id;
 }
 
 // Prototype: the current user shows their real status, everyone else is offline
-function statusOf(member: MemberInfo) {
+function statusOf(member: ChannelMemberInfo) {
   return getStatusOption(isCurrentUser(member) ? auth.currentUser?.status : 'offline');
 }
 </script>

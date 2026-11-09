@@ -40,6 +40,7 @@ export default class ChannelsController {
       })
       .preload('members', (query) => {
         query.where('is_banned', false)
+          .preload('user', (memberUser) => memberUser.select('id', 'nick_name'))
       })
       .orderBy('created_at', 'desc')
 

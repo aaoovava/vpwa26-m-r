@@ -15,6 +15,8 @@ export default class MessageService {
    * Send a message to a channel and handle @mentions.
    */
   async sendMessage(userId: string, channelId: string, text: string) {
+    if (typeof text !== 'string' || !text.trim()) throw new Error('Message cannot be empty.')
+    text = text.trim()
     const isMember = await ChannelMember.query()
       .where('channel_id', channelId)
       .where('user_id', userId)
@@ -24,7 +26,7 @@ export default class MessageService {
     if (!isMember) throw new Error('You are not a member of this channel.')
 
     // Extract @mentions using the improved regex
-    const mentionNicks = [...text.matchAll(MENTION_REGEX)].map(m => m[1])
+    const mentionNicks = [...new Set([...text.matchAll(MENTION_REGEX)].map((match) => match[1].toLowerCase()))]
     return await db.transaction(async (trx) => {
       // Create the message
       const message = new Message()
@@ -43,7 +45,11 @@ export default class MessageService {
       // Save mentions
       if (mentionNicks.length > 0) {
         for (const nick of mentionNicks) {
-          const targetUser = await User.findBy('nick_name', nick)
+          const targetUser = await User.query()
+            .whereRaw('LOWER(nick_name) = ?', [nick])
+            .whereHas('channelMemberships', (members) => {
+              members.where('channel_id', channelId).where('is_banned', false)
+            }).first()
           if (targetUser) {
             const mention = new MessageMention()
             mention.useTransaction(trx)

@@ -46,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
 import { useQuasar } from 'quasar';
 import { useRouter } from 'vue-router';
 import ChannelList from '@/components/chat/ChannelList.vue';
@@ -66,14 +66,57 @@ const draft = ref('');
 const inputError = ref('');
 const submitting = ref(false);
 const membersDialogOpen = ref(false);
-// Channel expiration is handled by the backend when the list is loaded.
+let pollTimer: ReturnType<typeof setTimeout> | undefined;
+let pollVersion = 0;
+
+function stopPolling() {
+  pollVersion++;
+  clearTimeout(pollTimer);
+}
+
+async function poll(version: number, background: boolean) {
+  try {
+    await chat.refreshChannels(background);
+    if (version !== pollVersion) return;
+    const channelId = chat.activeChannel?.id;
+    if (channelId) await chat.fetchMessages(channelId, true);
+  } catch (error) {
+    if (version === pollVersion) {
+      chat.channelsError = error instanceof Error ? error.message : 'Unable to refresh chat.';
+    }
+  } finally {
+    // Schedule only after requests finish so slow requests cannot overlap cycles.
+    if (version === pollVersion) pollTimer = setTimeout(() => void poll(version, true), 3000);
+  }
+}
+
 watch(
-  () => auth.currentUser?.id,
+  () => [auth.currentUser?.id, auth.token],
   () => {
-    void chat.fetchChannels();
+    stopPolling();
+    if (!auth.isAuthenticated) {
+      chat.$reset();
+      void router.replace({ name: 'login' });
+      return;
+    }
+    void poll(pollVersion, false);
   },
   { immediate: true },
 );
+
+watch(
+  () => chat.activeChannelId,
+  (channelId) => {
+    chat.resetMessageView();
+    if (channelId) void chat.fetchMessages(channelId);
+  },
+  { immediate: true, flush: 'sync' },
+);
+
+onUnmounted(() => {
+  stopPolling();
+  chat.resetMessageView();
+});
 
 watch([draft, () => chat.activeChannelId], () => {
   inputError.value = '';
@@ -89,12 +132,12 @@ async function onSubmit(text: string) {
   try {
     switch (parsed.type) {
       case 'message':
-        chat.sendMessage(parsed.text);
-        draft.value = '';
-        break;
-
       case 'mention':
-        chat.sendMention(parsed.nickName, text);
+        if (!chat.activeChannelId) {
+          inputError.value = 'Select a channel first.';
+          break;
+        }
+        await chat.sendMessage(chat.activeChannelId, parsed.text);
         draft.value = '';
         break;
 
@@ -113,16 +156,21 @@ async function onSubmit(text: string) {
           inputError.value = 'Select a channel first.';
           break;
         }
-        chat.inviteUser(chat.activeChannelId, parsed.nickName);
+        const result = await chat.inviteUser(chat.activeChannelId, parsed.nickName);
         draft.value = '';
         $q.notify({
           type: 'positive',
-          message: `Invited ${parsed.nickName}`,
+          message: result.message,
         });
         break;
       }
 
       case 'list': {
+        await chat.fetchChannels(true);
+        if (chat.channelsError) {
+          inputError.value = chat.channelsError;
+          break;
+        }
         if (!chat.activeChannelId) {
           inputError.value = 'No active channel.';
           break;

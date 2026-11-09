@@ -1,5 +1,16 @@
 <template>
   <q-page class="q-pa-md">
+    <q-banner v-if="chat.messagesError" class="bg-red-1 text-negative q-mb-md" role="alert">
+      {{ chat.messagesError }}
+      <template v-if="chat.activeChannel" #action>
+        <q-btn
+          flat
+          label="Try again"
+          :disable="chat.messagesLoading"
+          @click="chat.fetchMessages(chat.activeChannel.id)"
+        />
+      </template>
+    </q-banner>
     <div v-if="chat.activeChannel">
       <h1 class="text-h6 q-mt-none q-mb-sm channel-name">
         <q-icon :name="chat.activeChannel.isPrivate ? 'lock' : 'tag'" class="q-mr-xs" />
@@ -18,7 +29,14 @@
         @click="openSimulation"
       />
       <q-separator />
-      <MessageList :messages="chat.activeMessages" />
+      <div v-if="chat.messagesLoading" class="q-mt-md" role="status">
+        <q-spinner color="primary" class="q-mr-sm" />Loading messages...
+      </div>
+      <MessageList
+        v-else-if="!chat.messagesError || chat.activeMessages.length"
+        :key="chat.activeChannel.id"
+        :messages="chat.activeMessages"
+      />
     </div>
     <div v-else>
       <h1 class="text-h6 q-mt-none">Select a channel</h1>
